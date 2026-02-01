@@ -11,12 +11,12 @@ The engine connects `Triggers` (Events) to `Actions` (Providers) via a `Schedule
 
 ```mermaid
 flowchart TD
-    Event["Incoming Event (Alert/Incident)"] --> Match{"Does Trigger Match?"}
-    Match -- "Yes" --> Scheduler["Workflow Scheduler"]
-    Match -- "No" --> Ignore(["Ignore"])
-    Scheduler -- "Lock & Enqueue" --> Execution["Execution Thread"]
-    Execution -- "Run Steps" --> Providers["Providers (Slack/PagerDuty)"]
-    Execution -- "Save Result" --> DB[("Workflow Execution Log")]
+    Event[Incoming Event (Alert/Incident)] --> Match{Does Trigger Match?}
+    Match -- Yes --> Scheduler[Workflow Scheduler]
+    Match -- No --> Ignore([Ignore])
+    Scheduler -->|Lock & Enqueue| Execution[Execution Thread]
+    Execution -->|Run Steps| Providers[Providers (Slack/PagerDuty)]
+    Execution -->|Save Result| DB[(Workflow Execution Log)]
 ```
 
 ## 1. Trigger Matching (`insert_events`)

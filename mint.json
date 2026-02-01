@@ -20,7 +20,8 @@
             "group": "Getting Started",
             "pages": [
                 "introduction",
-                "architecture"
+                "architecture",
+                "event-handler-architecture"
             ]
         },
         {
@@ -43,12 +44,6 @@
                 "components/alert-manager",
                 "components/workflow-engine",
                 "components/rules-engine"
-            ]
-        },
-        {
-            "group": "Event Handler Architecture",
-            "pages": [
-                "event-handler-architecture"
             ]
         }
     ]

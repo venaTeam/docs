@@ -5,35 +5,38 @@ description: "Understand the separation between API Ingestion, Background Proces
 
 ## High-Level Overview
 
-Keep uses an **asynchronous architecture**. The API handles ingestion (fast), while background workers handle the heavy lifting (parsing, deduplication, workflows).
+Keep uses an **asynchronous microservices architecture**. The API handles ingestion (fast), while the Event Handler microservice handles the heavy lifting (parsing, deduplication, workflows).
 
 This separation ensures that high volumes of alerts do not block the API or slow down the user interface.
 
 ## Part 1: API Layer (Ingestion)
 
-The API layer is responsible **only** for receiving the alert and safely placing it into a queue. It does **not** process, validate, or save the alert to the database.
+The API layer is responsible **only** for receiving the alert and safely producing it to the messaging layer. It does **not** process, validate, or save the alert to the database synchronously.
 
 ### Ingestion Flow
 1.  **Endpoint**: Client posts to `POST /alerts/event/{provider_type}`.
-2.  **Queue**: The API pushes the raw payload to **Redis** (specifically `keep_arq_queue_basic`).
+2.  **Produce**: The API uses the `EventProducer` to offload the raw event.
+    *   If using **Redis**: Pushes to `keep_arq_queue_basic`.
+    *   If using **Kafka**: Publishes to the configured topic.
 3.  **Response**: Returns `202 Accepted` immediately, confirming receipt.
 
 ```mermaid
 flowchart LR
     Client(["Client / Webhook"]) -->|POST /event| API[Keep API]
-    API -->|Enqueue Task| Redis[(Redis Queue)]
+    API -->|Produce| Bus{Messaging Layer}
+    Bus -.->|Redis/Kafka| Storage[Queue/Topic]
     API -.->|202 Accepted| Client
     
     style Client fill:#f9f,stroke:#333
-    style Redis fill:#ffdec7,stroke:#333
+    style Bus fill:#ffdec7,stroke:#333
 ```
 
 ## Part 2: Worker Layer (Processing)
 
-The Worker layer (running `ARQGunicornWorker`) picks up tasks from Redis and executes the business logic. **This is where the actual "work" happens.**
+The Event Handler service picks up tasks from the messaging layer and executes the business logic. **This is where the actual "work" happens.**
 
 ### Processing Flow
-1.  **Dequeue**: Worker pulls the raw event from Redis.
+1.  **Consume**: The `EventConsumer` (Redis or Kafka) reads the raw message.
 2.  **Normalization**: Converts vendor-specific JSON to `AlertDto`.
 3.  **Orchestration**: Runs deduplication, DB persistence, and automation triggers.
 
@@ -41,18 +44,18 @@ The Worker layer (running `ARQGunicornWorker`) picks up tasks from Redis and exe
 
 ```mermaid
 flowchart TD
-    Redis[(Redis Queue)] -->|Dequeue| Worker[Worker Process]
+    Storage[Queue/Topic] -->|Consume| Worker[Event Handler]
     Worker --> Extraction[Pre-formatting <br/> Extraction Rules]
     Extraction --> Format[Format Alert <br/> Provider Specific]
     Format --> InternalPrep[Internal Prep]
     InternalPrep --> HandleFormatted[Handle Formatted Events]
     
-    style Redis fill:#ffdec7,stroke:#333
+    style Storage fill:#ffdec7,stroke:#333
 ```
 
 ### Deep Dive: `__handle_formatted_events`
 
-Once the alert is formatted, it enters the orchestration phase:
+Once the alert is formatted, it enters the orchestration phase provided by `process_event_task.py`:
 
 ```mermaid
 flowchart TD
@@ -146,7 +149,7 @@ This function is the entry point. It calls the **Provider Class** to format the 
 #### Step A: Logic Setup
 The function initializes tracing (OpenTelemetry) and creates a database session that will persist throughout the lifecycle of this event.
 
-```python keep/api/tasks/process_event_task.py
+```python keep/common/event_management/process_event_task.py
 @processing_time_summary.time()
 def process_event(
     ctx: dict,  # arq context
@@ -195,7 +198,7 @@ Finally, we ensure the event is a list (to support batch processing) and run int
 ```python
         if event:
             if isinstance(event, AlertDto):
-                event = [event] # Ensure list format
+                event = [AlertDto] # Ensure list format
 
             with tracer.start_as_current_span("process_event_internal_preparation"):
                 __internal_prepartion(event, fingerprint, api_key_name)
@@ -220,7 +223,7 @@ Then, we run **Deduplication**. The `AlertDeduplicator` checks the alert's `fing
 *   **Full Duplicate**: Same fingerprint, same content. (We only update the timestamp).
 *   **Partial Duplicate**: Same fingerprint, different content. (We process it as an update/resolve).
 
-```python keep/api/tasks/process_event_task.py
+```python keep/common/event_management/process_event_task.py
 def __handle_formatted_events(...):
     # 1. Maintenance Windows
     if KEEP_MAINTENANCE_WINDOWS_ENABLED:

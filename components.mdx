@@ -4,8 +4,23 @@ description: "Deep dive into Alert Manager, Workflow Engine, and Providers"
 ---
 
 ## Alert Manager
-*   **Files**: `keep/api/routes/alerts.py`, `keep/api/core/alerts.py`.
-*   **Responsibility**: CRUD operations for alerts, grouping logic, and history tracking.
+*   **Files**: `keep/api/routes/alerts.py`, `keep/common/event_management`.
+*   **Responsibility**: The high-level management of alerts.
+    *   **API**: Handles CRUD operations, history querying, and dashboard data.
+    *   **Logic**: The `AlertDeduplicator` service manages the complexity of identifying duplicate alerts and updating existing ones.
+
+## Event Handler Service
+*   **Files**: `keep/event_handler`, `keep/common/event_management/process_event_task.py`.
+*   **Responsibility**: The operational core that processes incoming events.
+    *   **Consumption**: Polls Redis or subscribes to Kafka.
+    *   **Pipeline**: Runs the `process_event` task which orchestrates parsing, enrichment, deduplication, and saving.
+
+## Messaging Layer
+*   **Files**: `keep/common/core/messaging.py`.
+*   **Abstractions**:
+    *   **EventProducer**: Interface for sending messages (implemented by `RedisEventProducer` and `KafkaEventProducer`).
+    *   **EventConsumer**: Interface for receiving messages.
+*   **Flexibility**: Allows switching the underlying infrastructure (Redis vs Kafka) via configuration variables (`MESSAGING_TYPE`) without changing application code.
 
 ## Workflow Engine
 *   **Files**: `keep/workflowmanager`.
