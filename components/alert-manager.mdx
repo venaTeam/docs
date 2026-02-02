@@ -106,8 +106,69 @@ Facets are the sidebar filters in the UI. Calculating these efficiently for mill
 1.  **Static Facets**: `Severity`, `Status`, `Source`. These are predefined in code.
 2.  **Dynamic Facets**: To find other filterable fields, `get_alert_potential_facet_fields` queries the `AlertField` table, which tracks unique keys found in alert payloads.
 
+## Alert Audit Trail (`AlertAudit`)
+
+The `AlertAudit` model provides a complete audit history of "who did what and when" for every alert.
+
+### Model Structure
+
+```python
+class AlertAudit(SQLModel, table=True):
+    id: UUID
+    fingerprint: str           # Links to the alert
+    tenant_id: str
+    timestamp: datetime        # When the action occurred
+    user_id: str               # "system" or actual user email
+    action: str                # ActionType enum value
+    description: str           # Human-readable text
+```
+
+### Audited Actions (`ActionType`)
+
+| **Action** | **Description** |
+|------------|-----------------|
+| `DEDUPLICATED` | Alert was deduplicated (automated) |
+| `TIGGERED` | Alert was triggered |
+| `ACKNOWLEDGE` | User acknowledged the alert |
+| `AUTOMATIC_RESOLVE` | Alert resolved by system |
+| `MANUAL_RESOLVE` | User manually resolved alert |
+| `MAPPING_RULE_ENRICH` | Enriched by mapping rule |
+| `EXTRACTION_RULE_ENRICH` | Enriched by extraction rule |
+| `TICKET_ASSIGNED` / `TICKET_UNASSIGNED` | Ticketing actions |
+| `MAINTENANCE` / `MAINTENANCE_EXPIRED` | Maintenance window events |
+| `COMMENT` / `UNCOMMENT` | User comments |
+
+### Usage Example
+
+```python
+# In process_event_task.py - logging deduplication
+audit = AlertAudit(
+    tenant_id=tenant_id,
+    fingerprint=event.fingerprint,
+    status=event.status,
+    action=ActionType.DEDUPLICATED.value,
+    user_id="system",
+    description="Alert was deduplicated",
+)
+session.add(audit)
+```
+
+### Performance Consideration
+
+Audit logging is controlled by `KEEP_AUDIT_EVENTS_ENABLED`. In high-volume environments (100k+ alerts/hour), disabling this reduces:
+- **Database writes**: Each dedup = 1 extra INSERT
+- **Storage growth**: The `alertaudit` table grows rapidly
+- **Latency**: Reduces transaction time in the hot path
+
+**Trade-off**: Disabling loses the activity timeline, enrichment history, and compliance tracking.
+
+### API Endpoints
+
+- `GET /alerts/{fingerprint}/audit` → Returns `AlertAuditDto` list with grouped consecutive events
+
 ## Code Reference
 *   **Endpoints**: `keep/api/routes/alerts.py` (API Layer)
 *   **Logic**: `keep/api/core/alerts.py` (Query Building)
 *   **Deduplication**: `keep/api/alert_deduplicator/alert_deduplicator.py` (Hashing)
 *   **Model**: `keep/api/models/alert.py` (DTO)
+*   **Audit Model**: `keep/common/models/db/alert.py` (`AlertAudit`)
